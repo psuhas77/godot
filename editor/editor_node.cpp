@@ -2529,6 +2529,9 @@ void EditorNode::_tool_menu_option(int p_idx) {
 		case RUN_PROJECT_DATA_FOLDER: {
 			OS::get_singleton()->shell_open(String("file://") + OS::get_singleton()->get_user_data_dir());
 		} break;
+               case TOOLS_STATIC_ANALYZER: {
+               static_analyzer->show();
+               } break;
 		case TOOLS_CUSTOM: {
 			if (tool_menu->get_item_submenu(p_idx) == "") {
 				Array params = tool_menu->get_item_metadata(p_idx);
@@ -5754,6 +5757,7 @@ EditorNode::EditorNode() {
 	p->add_submenu_item(TTR("Tools"), "Tools");
 	tool_menu->add_item(TTR("Orphan Resource Explorer"), TOOLS_ORPHAN_RESOURCES);
 	tool_menu->add_item(TTR("Open Project Data Folder"), RUN_PROJECT_DATA_FOLDER);
+       tool_menu->add_item(TTR("Static Analyzer"), TOOLS_STATIC_ANALYZER);
 	p->add_separator();
 	p->add_item(TTR("Install Android Build Template"), FILE_INSTALL_ANDROID_SOURCE);
 	p->add_separator();
@@ -6091,7 +6095,10 @@ EditorNode::EditorNode() {
 
 	orphan_resources = memnew(OrphanResourcesDialog);
 	gui_base->add_child(orphan_resources);
-
+    
+       static_analyzer = memnew(StaticAnalyzerDialog);
+       gui_base->add_child(static_analyzer);
+    
 	confirmation = memnew(ConfirmationDialog);
 	gui_base->add_child(confirmation);
 	confirmation->connect("confirmed", this, "_menu_confirm_current");

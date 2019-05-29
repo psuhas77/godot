@@ -59,6 +59,7 @@
 #include "editor/node_dock.h"
 #include "editor/pane_drag.h"
 #include "editor/plugin_config_dialog.h"
+#include "editor/plugins/static_analyzer.h"
 #include "editor/progress_dialog.h"
 #include "editor/project_export.h"
 #include "editor/project_settings_editor.h"
@@ -162,6 +163,7 @@ private:
 		EDIT_REVERT,
 		TOOLS_ORPHAN_RESOURCES,
 		TOOLS_CUSTOM,
+               TOOLS_STATIC_ANALYZER,
 		RESOURCE_SAVE,
 		RESOURCE_SAVE_AS,
 		RUN_PLAY,
@@ -348,7 +350,8 @@ private:
 
 	DependencyErrorDialog *dependency_error;
 	DependencyEditor *dependency_fixer;
-	OrphanResourcesDialog *orphan_resources;
+       OrphanResourcesDialog *orphan_resources;
+       StaticAnalyzerDialog *static_analyzer;
 	ConfirmationDialog *open_imported;
 	Button *new_inherited_button;
 	String open_import_request;

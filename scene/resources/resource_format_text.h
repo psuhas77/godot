@@ -55,6 +55,7 @@ class ResourceInteractiveLoaderText : public ResourceInteractiveLoader {
 
 	bool is_scene;
 	String res_type;
+	bool continue_check;
 
 	bool ignore_resource_parsing;
 
@@ -116,11 +117,15 @@ public:
 	virtual int get_stage() const;
 	virtual int get_stage_count() const;
 	virtual void set_translation_remapped(bool p_remapped);
+	void set_continue_check(bool con_check);
+	String get_error_text();
+	String get_lines();
 
 	void open(FileAccess *p_f, bool p_skip_first_tag = false);
 	String recognize(FileAccess *p_f);
 	void get_dependencies(FileAccess *p_f, List<String> *p_dependencies, bool p_add_types);
 	Error rename_dependencies(FileAccess *p_f, const String &p_path, const Map<String, String> &p_map);
+	Error continue_poll(Error err);
 
 	Error save_as_binary(FileAccess *p_f, const String &p_path);
 	ResourceInteractiveLoaderText();

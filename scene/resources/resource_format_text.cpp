@@ -399,6 +399,9 @@ Error ResourceInteractiveLoaderText::poll() {
 		if (!next_tag.fields.has("path")) {
 			error = ERR_FILE_CORRUPT;
 			error_text = "Missing 'path' in external resource tag";
+			if (continue_check) {
+				return continue_poll(error);
+			}
 			_printerr();
 			return error;
 		}
@@ -406,6 +409,9 @@ Error ResourceInteractiveLoaderText::poll() {
 		if (!next_tag.fields.has("type")) {
 			error = ERR_FILE_CORRUPT;
 			error_text = "Missing 'type' in external resource tag";
+			if (continue_check) {
+				return continue_poll(error);
+			}
 			_printerr();
 			return error;
 		}
@@ -413,6 +419,9 @@ Error ResourceInteractiveLoaderText::poll() {
 		if (!next_tag.fields.has("id")) {
 			error = ERR_FILE_CORRUPT;
 			error_text = "Missing 'id' in external resource tag";
+			if (continue_check) {
+				return continue_poll(error);
+			}
 			_printerr();
 			return error;
 		}
@@ -441,6 +450,10 @@ Error ResourceInteractiveLoaderText::poll() {
 				return error;
 			} else {
 				ResourceLoader::notify_dependency_error(local_path, path, type);
+				if (continue_check) {
+					error_text = "[ext_resource] referenced nonexistent resource at: " + path;
+					return continue_poll(ERR_FILE_MISSING_DEPENDENCIES);
+				}
 			}
 		} else {
 
@@ -664,8 +677,21 @@ void ResourceInteractiveLoaderText::set_translation_remapped(bool p_remapped) {
 	translation_remapped = p_remapped;
 }
 
+void ResourceInteractiveLoaderText::set_continue_check(bool con_check) {
+	continue_check = con_check;
+}
+
+String ResourceInteractiveLoaderText::get_error_text() {
+	return error_text;
+}
+
+String ResourceInteractiveLoaderText::get_lines() {
+	return itos(lines);
+}
+
 ResourceInteractiveLoaderText::ResourceInteractiveLoaderText() {
 	translation_remapped = false;
+	continue_check = false;
 }
 
 ResourceInteractiveLoaderText::~ResourceInteractiveLoaderText() {
@@ -820,6 +846,35 @@ Error ResourceInteractiveLoaderText::rename_dependencies(FileAccess *p_f, const 
 	memdelete(da);
 
 	return OK;
+}
+
+Error ResourceInteractiveLoaderText::continue_poll(Error err) {
+
+	String path = next_tag.fields["path"];
+	String type = next_tag.fields["type"];
+	int index = next_tag.fields["id"];
+
+	if (path.find("://") == -1 && path.is_rel_path()) {
+		path = ProjectSettings::get_singleton()->localize_path(local_path.get_base_dir().plus_file(path));
+	}
+
+	if (remaps.has(path)) {
+		path = remaps[path];
+	}
+
+	ExtResource er;
+	er.path = path;
+	er.type = type;
+	ext_resources[index] = er;
+
+	Error parse_next = VariantParser::parse_tag(&stream, lines, error_text, next_tag, &rp);
+
+	if (parse_next != OK) {
+		return parse_next;
+	}
+
+	resource_current++;
+	return err;
 }
 
 void ResourceInteractiveLoaderText::open(FileAccess *p_f, bool p_skip_first_tag) {

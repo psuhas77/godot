@@ -41,6 +41,7 @@ class StaticAnalyzerDialog : public ConfirmationDialog {
     GDCLASS(StaticAnalyzerDialog, ConfirmationDialog);
     
     Tree *scenes;
+	Tree *scripts;
     void _traverse_scenes(EditorFileSystemDirectory *efsd,TreeItem *root);
     
 public:

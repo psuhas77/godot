@@ -33,6 +33,7 @@
 
 #include "editor_file_dialog.h"
 #include "editor_file_system.h"
+#include "modules/gdscript/gdscript_parser.h"
 #include "scene/gui/dialogs.h"
 #include "scene/gui/tab_container.h"
 #include "scene/gui/tree.h"
@@ -42,7 +43,10 @@ class StaticAnalyzerDialog : public ConfirmationDialog {
     
     Tree *scenes;
 	Tree *scripts;
-    void _traverse_scenes(EditorFileSystemDirectory *efsd,TreeItem *root);
+	void _traverse_scenes(EditorFileSystemDirectory *efsd, TreeItem *root, TreeItem *rootscript);
+	void _traverse_script(String &p_code, String &p_self_path);
+	void check_variables(const GDScriptParser::Node *n);
+	void check_function(const GDScriptParser::Node *n);
     
 public:
     void show();

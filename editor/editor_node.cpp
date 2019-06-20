@@ -2529,9 +2529,9 @@ void EditorNode::_tool_menu_option(int p_idx) {
 		case RUN_PROJECT_DATA_FOLDER: {
 			OS::get_singleton()->shell_open(String("file://") + OS::get_singleton()->get_user_data_dir());
 		} break;
-               case TOOLS_STATIC_ANALYZER: {
-               static_analyzer->show();
-               } break;
+		case TOOLS_STATIC_ANALYZER: {
+			static_analyzer->show();
+		} break;
 		case TOOLS_CUSTOM: {
 			if (tool_menu->get_item_submenu(p_idx) == "") {
 				Array params = tool_menu->get_item_metadata(p_idx);

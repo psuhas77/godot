@@ -33,23 +33,26 @@
 #include "core/io/resource_loader.h"
 #include "core/os/file_access.h"
 #include "editor/editor_node.h"
+#include "modules/gdscript/gdscript_parser.h"
 #include "scene/resources/resource_format_text.h"
 
 void StaticAnalyzerDialog::show() {
 	scenes->clear();
+	scripts->clear();
 	TreeItem *root = scenes->create_item();
-	_traverse_scenes(EditorFileSystem::get_singleton()->get_filesystem(), root);
+	TreeItem *rootscript = scripts->create_item();
+	_traverse_scenes(EditorFileSystem::get_singleton()->get_filesystem(), root, rootscript);
 	popup_centered_ratio();
 }
 
-void StaticAnalyzerDialog::_traverse_scenes(EditorFileSystemDirectory *efsd, TreeItem *root) {
+void StaticAnalyzerDialog::_traverse_scenes(EditorFileSystemDirectory *efsd, TreeItem *root, TreeItem *rootscript) {
 
 	if (!efsd)
 		return;
 
 	for (int i = 0; i < efsd->get_subdir_count(); i++) {
 
-		_traverse_scenes(efsd->get_subdir(i), root);
+		_traverse_scenes(efsd->get_subdir(i), root, rootscript);
 	}
 
 	for (int i = 0; i < efsd->get_file_count(); i++) {
@@ -89,13 +92,163 @@ void StaticAnalyzerDialog::_traverse_scenes(EditorFileSystemDirectory *efsd, Tre
 				}
 			}
 
-			
 			if (!scene_broken) {
-				Ref<PackedScene> ps = rilt->get_resource(); 
+				Ref<PackedScene> ps = rilt->get_resource();
 				Ref<SceneState> ss = ps->get_state(); //contains the scene tree
 
-			}
+				for (int j = 0; j < ss->get_node_count(); j++) {
 
+					if (ss->get_node_instance(j).is_valid()) {
+						Ref<Script> scr = ss->get_node_instance(j)->instance()->get_script();
+						if (!scr.is_null()) {
+							_traverse_script(scr->get_source_code(), scr->get_path());
+						}
+					}
+
+					for (int k = 0; k < ss->get_node_property_count(j); k++) {
+						String node_prop = ss->get_node_property_name(j, k);
+
+						if (node_prop == "script") {
+							Ref<Script> scr = ss->get_node_property_value(j, k);
+							_traverse_script(scr->get_source_code(), scr->get_path());
+						}
+
+						//Add checks for other resources
+					}
+				}
+			}
+		}
+	}
+}
+
+void StaticAnalyzerDialog::_traverse_script(String &p_code, String &p_self_path) {
+
+	GDScriptParser parser;
+	parser.clear();
+	Error e = parser.parse(p_code, "", false, p_self_path);
+	const GDScriptParser::ClassNode *c = static_cast<const GDScriptParser::ClassNode *>(parser.get_parse_tree());
+
+	check_variables(c);
+
+	for (int i = 0; i < c->functions.size(); i++) {
+		check_function(c->functions[i]);
+	}
+
+	
+}
+
+void StaticAnalyzerDialog::check_variables(const GDScriptParser::Node *n) {
+
+	if (n->type == n->TYPE_CLASS) {
+
+		const GDScriptParser::ClassNode *c = static_cast<const GDScriptParser::ClassNode *>(n);
+
+		for (int i = 0; i < c->variables.size(); i++) {
+
+			if (c->variables[i].expression->type == c->TYPE_OPERATOR) {
+
+				GDScriptParser::OperatorNode *o = static_cast<GDScriptParser::OperatorNode *>(c->variables[i].expression);
+
+				for (int j = 0; j < o->arguments.size(); j++) {
+
+					if (o->arguments[j]->type == o->TYPE_IDENTIFIER) {
+
+						GDScriptParser::IdentifierNode *idn = static_cast<GDScriptParser::IdentifierNode *>(o->arguments[j]);
+
+						if (idn->name == "get_node") {
+							//check get_node call
+						}
+					}
+					if (o->arguments[j]->type == o->TYPE_OPERATOR) {
+						check_variables(o->arguments[j]);
+					}
+				}
+			}
+		}
+	}
+
+	if (n->type == n->TYPE_OPERATOR) {
+
+		const GDScriptParser::OperatorNode *o = static_cast<const GDScriptParser::OperatorNode *>(n);
+
+		for (int j = 0; j < o->arguments.size(); j++) {
+
+			if (o->arguments[j]->type == o->TYPE_IDENTIFIER) {
+
+				GDScriptParser::IdentifierNode *idn = static_cast<GDScriptParser::IdentifierNode *>(o->arguments[j]);
+
+				if (idn->name == "get_node") {
+					//check get_node call
+				}
+			}
+			
+			if (o->arguments[j]->type == o->TYPE_OPERATOR) {
+				check_variables(o->arguments[j]);
+			}
+		}
+	}
+}
+
+void StaticAnalyzerDialog::check_function(const GDScriptParser::Node *n) {
+
+	if (n->type == n->TYPE_FUNCTION) {
+
+		const GDScriptParser::FunctionNode *f = static_cast<const GDScriptParser::FunctionNode *>(n);
+
+		for (int i = 0; i < f->body->statements.size(); i++) {
+
+			check_function(f->body->statements[i]);
+		}
+	}
+
+	if (n->type == n->TYPE_OPERATOR) {
+
+		const GDScriptParser::OperatorNode *o = static_cast<const GDScriptParser::OperatorNode *>(n);
+
+		for (int i = 0; i < o->arguments.size(); i++) {
+
+			if (o->arguments[i]->type == o->TYPE_IDENTIFIER) {
+
+				GDScriptParser::IdentifierNode *idn = static_cast<GDScriptParser::IdentifierNode *>(o->arguments[i]);
+
+				if (idn->name == "get_node") {
+					//check get_node call
+				}
+			}
+			if (o->arguments[i]->type == o->TYPE_OPERATOR) {
+				check_function(o->arguments[i]);
+			}
+		}
+	}
+
+	if (n->type == n->TYPE_CONTROL_FLOW) {
+
+		const GDScriptParser::ControlFlowNode *cf = static_cast<const GDScriptParser::ControlFlowNode *>(n);
+
+		if (cf->body) {
+
+			for (int i = 0; i < cf->body->statements.size(); i++) {
+
+				check_function(cf->body->statements[i]);
+			}
+		}
+		if (cf->body_else) {
+
+			for (int i = 0; i < cf->body_else->statements.size(); i++) {
+
+				check_function(cf->body_else->statements[i]);
+			}
+		}
+	}
+
+	if (n->type == n->TYPE_BLOCK) {
+
+		const GDScriptParser::BlockNode *b = static_cast<const GDScriptParser::BlockNode *>(n);
+
+		if (!b->statements.empty()) {
+			for (int i = 0; i < b->statements.size(); i++) {
+				check_function(b->statements[i]);
+			}
 		}
 	}
 }

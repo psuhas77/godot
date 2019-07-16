@@ -34,18 +34,23 @@
 #include "core/os/file_access.h"
 #include "editor/editor_node.h"
 #include "modules/gdscript/gdscript_parser.h"
+#include "scene/main/node.h"
+#include "scene/resources/packed_scene.h"
 #include "scene/resources/resource_format_text.h"
 
 void StaticAnalyzerDialog::show() {
 	scenes->clear();
 	scripts->clear();
-	TreeItem *root = scenes->create_item();
-	TreeItem *rootscript = scripts->create_item();
+	scene_cache.clear();
+	script_error_cache.clear();
+	root = scenes->create_item();
+	rootscript = scripts->create_item();
+	_traverse_scenes(EditorFileSystem::get_singleton()->get_filesystem(), root, rootscript, true); // building the scence cache
 	_traverse_scenes(EditorFileSystem::get_singleton()->get_filesystem(), root, rootscript);
 	popup_centered_ratio();
 }
 
-void StaticAnalyzerDialog::_traverse_scenes(EditorFileSystemDirectory *efsd, TreeItem *root, TreeItem *rootscript) {
+void StaticAnalyzerDialog::_traverse_scenes(EditorFileSystemDirectory *efsd, TreeItem *root, TreeItem *rootscript, bool pre_instance) {
 
 	if (!efsd)
 		return;
@@ -92,15 +97,43 @@ void StaticAnalyzerDialog::_traverse_scenes(EditorFileSystemDirectory *efsd, Tre
 				}
 			}
 
-			if (!scene_broken) {
-				Ref<PackedScene> ps = rilt->get_resource();
+			if (!scene_broken && pre_instance) {
+				//Ref<PackedScene> ps = rilt->get_resource();
+				Ref<PackedScene> ps = Ref<PackedScene>(Object::cast_to<PackedScene>(*rilt->get_resource()));
+
+				if (ps->can_instance()) {
+					ps->instance(ps->GEN_EDIT_STATE_MAIN);
+				}
+
+				String scene_path = efsd->get_file_path(i);
+				
+				String scene_name = scene_path.substr(6, scene_path.length() - 11);
+				scene_cache[scene_name] = ps;
+
+			}
+
+			else if (!scene_broken && !pre_instance) {
+				Ref<PackedScene> ps = Ref<PackedScene>(Object::cast_to<PackedScene>(*rilt->get_resource()));
+
+				if(ps->get_path().empty()){
+					ps->set_path(efsd->get_file_path(i), true);
+				}
+
+				if (ps->get_name().empty()) {
+					ps->set_name(efsd->get_file_path(i).substr(6, efsd->get_file_path(i).length() - 11));
+				}
+
+				current_scene = ps;
+
 				Ref<SceneState> ss = ps->get_state(); //contains the scene tree
 
 				for (int j = 0; j < ss->get_node_count(); j++) {
 
 					if (ss->get_node_instance(j).is_valid()) {
 						Ref<Script> scr = ss->get_node_instance(j)->instance()->get_script();
+						current_script = scr;
 						if (!scr.is_null()) {
+							current_node_id = j;
 							_traverse_script(scr->get_source_code(), scr->get_path());
 						}
 					}
@@ -110,6 +143,8 @@ void StaticAnalyzerDialog::_traverse_scenes(EditorFileSystemDirectory *efsd, Tre
 
 						if (node_prop == "script") {
 							Ref<Script> scr = ss->get_node_property_value(j, k);
+							current_script = scr;
+							current_node_id = j;
 							_traverse_script(scr->get_source_code(), scr->get_path());
 						}
 
@@ -121,20 +156,35 @@ void StaticAnalyzerDialog::_traverse_scenes(EditorFileSystemDirectory *efsd, Tre
 	}
 }
 
-void StaticAnalyzerDialog::_traverse_script(String &p_code, String &p_self_path) {
+void StaticAnalyzerDialog::_traverse_script(const String &p_code, const String &p_self_path) {
 
 	GDScriptParser parser;
 	parser.clear();
 	Error e = parser.parse(p_code, "", false, p_self_path);
-	const GDScriptParser::ClassNode *c = static_cast<const GDScriptParser::ClassNode *>(parser.get_parse_tree());
+	const GDScriptParser::ClassNode *c = static_cast<const GDScriptParser::ClassNode *>(parser.get_parse_tree());		//main class
+	current_class = c;
 
+	check_class(current_class);
+}
+
+void StaticAnalyzerDialog::check_class(const GDScriptParser::Node *n) {
+
+	const GDScriptParser::ClassNode *c = static_cast<const GDScriptParser::ClassNode *>(n);
 	check_variables(c);
 
 	for (int i = 0; i < c->functions.size(); i++) {
+
+		current_function = c->functions[i];
 		check_function(c->functions[i]);
 	}
+	current_function = NULL;
 
-	
+	for (int i = 0; i < c->subclasses.size(); i++) {
+
+		current_class = c->subclasses[i];
+		check_class(current_class);
+			
+	}
 }
 
 void StaticAnalyzerDialog::check_variables(const GDScriptParser::Node *n) {
@@ -157,6 +207,8 @@ void StaticAnalyzerDialog::check_variables(const GDScriptParser::Node *n) {
 
 						if (idn->name == "get_node") {
 							//check get_node call
+							check_node_path(o->arguments[j + 1]);
+							int y = 2;
 						}
 					}
 					if (o->arguments[j]->type == o->TYPE_OPERATOR) {
@@ -179,15 +231,19 @@ void StaticAnalyzerDialog::check_variables(const GDScriptParser::Node *n) {
 
 				if (idn->name == "get_node") {
 					//check get_node call
+					check_node_path(o->arguments[j + 1]);
+					int y = 2;
 				}
 			}
-			
+
 			if (o->arguments[j]->type == o->TYPE_OPERATOR) {
 				check_variables(o->arguments[j]);
 			}
 		}
 	}
 }
+
+
 
 void StaticAnalyzerDialog::check_function(const GDScriptParser::Node *n) {
 
@@ -213,8 +269,11 @@ void StaticAnalyzerDialog::check_function(const GDScriptParser::Node *n) {
 
 				if (idn->name == "get_node") {
 					//check get_node call
+					check_node_path(o->arguments[i + 1]);
+					int y = 2;
 				}
 			}
+
 			if (o->arguments[i]->type == o->TYPE_OPERATOR) {
 				check_function(o->arguments[i]);
 			}
@@ -246,11 +305,99 @@ void StaticAnalyzerDialog::check_function(const GDScriptParser::Node *n) {
 		const GDScriptParser::BlockNode *b = static_cast<const GDScriptParser::BlockNode *>(n);
 
 		if (!b->statements.empty()) {
+
 			for (int i = 0; i < b->statements.size(); i++) {
 				check_function(b->statements[i]);
 			}
 		}
 	}
+}
+
+void StaticAnalyzerDialog::check_node_path(const GDScriptParser::Node *n) {
+
+	const GDScriptParser::ConstantNode *cn;
+	String path;
+	if (n->type == n->TYPE_CONSTANT) {
+
+		cn = static_cast<const GDScriptParser::ConstantNode *>(n);
+
+		path = (String)cn->value;
+
+		NodePath node_path = NodePath(cn->value);
+
+		String script_name = current_script->get_path().substr(6, current_script->get_path().length() - 9);
+
+		bool node_found = false;
+		String first_path = node_path.get_name(0);
+
+		if (first_path == "root") {
+
+			first_path = node_path.get_name(1);
+			Vector<StringName> mod_path;
+
+			for (int i = 2; i < node_path.get_name_count(); i++) {
+
+				mod_path.push_back(node_path.get_name(i));
+			}
+
+			if (mod_path.empty()) {
+				mod_path.push_back(".");
+			}
+
+			node_path = NodePath(mod_path, false);
+		}
+
+		if ( !scene_cache[script_name].is_null() && scene_cache[script_name]->get_state()->find_node_by_path(node_path) != -1) {
+
+			node_found = true;
+		}
+
+		else if ( !scene_cache[first_path].is_null() && scene_cache[first_path]->get_state()->find_node_by_path(node_path) != -1) {
+
+			node_found = true;
+		}
+
+		
+		String context = current_scene->get_name() + current_scene->get_state()->get_node_path(current_node_id,true);
+		String issue = "line " + itos(cn->line) + " : node in " + path.quote() + " can't be found";
+
+		const script_errors scr_err = script_errors(script_name, context, issue);
+		
+		if (!node_found && script_error_cache.find(scr_err) == -1) {
+
+			TreeItem *script_item = scripts->create_item(rootscript);
+			script_item->set_text(0,script_name);
+			script_item->set_text(1, context);
+			script_item->set_text(2, issue);
+
+			script_error_cache.push_back(scr_err);
+					
+		}
+
+	}
+
+	//if get_node call is through an identifier
+	if (n->type == n->TYPE_IDENTIFIER) {
+		const GDScriptParser::IdentifierNode *in = static_cast<const GDScriptParser::IdentifierNode *>(n);
+
+		if (!current_function) {
+
+			for (int i = 0; i < current_class->variables.size(); i++) {
+
+				if (current_class->variables[i].identifier == in->name) {
+					check_node_path(current_class->variables[i].expression);
+					break;
+				}
+			}
+		}
+
+		else if (current_function && current_function->body->variables.has(in->name)) {
+
+			check_node_path(current_function->body->variables[in->name]->assign);
+			
+		}
+	}
+	
 }
 
 StaticAnalyzerDialog::StaticAnalyzerDialog() {
@@ -268,8 +415,8 @@ StaticAnalyzerDialog::StaticAnalyzerDialog() {
 	vb->add_margin_child("scenes", scenes, true);
 	scripts = memnew(Tree);
 	scripts->set_columns(3);
-	scripts->set_column_title(0, TTR("Node"));
-	scripts->set_column_title(1, TTR("Script"));
+	scripts->set_column_title(0, TTR("Script"));
+	scripts->set_column_title(1, TTR("Context"));
 	scripts->set_column_title(2, TTR("Issue"));
 	scripts->set_column_titles_visible(true);
 	scripts->set_hide_root(true);

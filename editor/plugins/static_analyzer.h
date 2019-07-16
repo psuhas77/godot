@@ -40,13 +40,47 @@
 
 class StaticAnalyzerDialog : public ConfirmationDialog {
     GDCLASS(StaticAnalyzerDialog, ConfirmationDialog);
-    
+
+	HashMap<String,Ref<PackedScene>> scene_cache; 
     Tree *scenes;
 	Tree *scripts;
-	void _traverse_scenes(EditorFileSystemDirectory *efsd, TreeItem *root, TreeItem *rootscript);
-	void _traverse_script(String &p_code, String &p_self_path);
-	void check_variables(const GDScriptParser::Node *n);
+	TreeItem *root;
+	TreeItem *rootscript;
+	Ref<Script> current_script;
+	Ref<PackedScene> current_scene;
+	int current_node_id;
+
+	struct script_errors {
+		String script;
+		String context;
+		String issue;
+
+		script_errors() {}
+
+		script_errors(String scr, String con, String iss) {
+			script = scr;
+			context = con;
+			issue = iss;
+		}
+
+		friend bool operator==(const script_errors& l, const script_errors& r) {
+			 if (l.script == r.script && l.context == r.context && l.issue == r.issue){return true;}
+			 return false;
+		}
+
+	};
+
+	Vector<script_errors> script_error_cache;
+
+	const GDScriptParser::ClassNode *current_class;
+	GDScriptParser::FunctionNode *current_function;
+	void _traverse_scenes(EditorFileSystemDirectory *efsd, TreeItem *root, TreeItem *rootscript, bool pre_instance = false);
+	void _traverse_script(const String &p_code, const String &p_self_path);
+
+	void check_class(const GDScriptParser::Node *n);
 	void check_function(const GDScriptParser::Node *n);
+	void check_node_path(const GDScriptParser::Node *n);
+	void check_variables(const GDScriptParser::Node *n);
     
 public:
     void show();

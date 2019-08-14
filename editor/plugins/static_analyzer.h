@@ -41,8 +41,9 @@
 class StaticAnalyzerDialog : public ConfirmationDialog {
     GDCLASS(StaticAnalyzerDialog, ConfirmationDialog);
 
-	HashMap<String,Ref<PackedScene>> scene_cache; 
-    Tree *scenes;
+	HashMap<String,Ref<PackedScene>> scene_cache;
+	Vector<String> script_traversed;
+	Tree *scenes;
 	Tree *scripts;
 	TreeItem *root;
 	TreeItem *rootscript;
@@ -77,10 +78,14 @@ class StaticAnalyzerDialog : public ConfirmationDialog {
 	void _traverse_scenes(EditorFileSystemDirectory *efsd, TreeItem *root, TreeItem *rootscript, bool pre_instance = false);
 	void _traverse_script(const String &p_code, const String &p_self_path);
 
+	void add_script_error(const script_errors scr_err);
 	void check_class(const GDScriptParser::Node *n);
-	void check_function(const GDScriptParser::Node *n);
+	void check_function(const GDScriptParser::FunctionNode *n);
+	void check_statement(const GDScriptParser::Node *n);
 	void check_node_path(const GDScriptParser::Node *n);
 	void check_variables(const GDScriptParser::Node *n);
+
+	String reduce_script_name(String scr_name);
     
 public:
     void show();

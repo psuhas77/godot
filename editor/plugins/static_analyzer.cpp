@@ -31,6 +31,7 @@
 #include "static_analyzer.h"
 
 #include "core/io/resource_loader.h"
+#include "core/object.h"
 #include "core/os/file_access.h"
 #include "editor/editor_node.h"
 #include "modules/gdscript/gdscript_parser.h"
@@ -43,6 +44,7 @@ void StaticAnalyzerDialog::show() {
 	scripts->clear();
 	scene_cache.clear();
 	script_error_cache.clear();
+	script_traversed.clear();
 	root = scenes->create_item();
 	rootscript = scripts->create_item();
 	_traverse_scenes(EditorFileSystem::get_singleton()->get_filesystem(), root, rootscript, true); // building the scence cache
@@ -106,7 +108,7 @@ void StaticAnalyzerDialog::_traverse_scenes(EditorFileSystemDirectory *efsd, Tre
 				}
 
 				String scene_path = efsd->get_file_path(i);
-				
+
 				String scene_name = scene_path.substr(6, scene_path.length() - 11);
 				scene_cache[scene_name] = ps;
 
@@ -115,7 +117,7 @@ void StaticAnalyzerDialog::_traverse_scenes(EditorFileSystemDirectory *efsd, Tre
 			else if (!scene_broken && !pre_instance) {
 				Ref<PackedScene> ps = Ref<PackedScene>(Object::cast_to<PackedScene>(*rilt->get_resource()));
 
-				if(ps->get_path().empty()){
+				if (ps->get_path().empty()) {
 					ps->set_path(efsd->get_file_path(i), true);
 				}
 
@@ -143,9 +145,13 @@ void StaticAnalyzerDialog::_traverse_scenes(EditorFileSystemDirectory *efsd, Tre
 
 						if (node_prop == "script") {
 							Ref<Script> scr = ss->get_node_property_value(j, k);
-							current_script = scr;
-							current_node_id = j;
-							_traverse_script(scr->get_source_code(), scr->get_path());
+
+							if (scr.is_valid()) {
+
+								current_script = scr;
+								current_node_id = j;
+								_traverse_script(scr->get_source_code(), scr->get_path());
+							}
 						}
 
 						//Add checks for other resources
@@ -161,10 +167,42 @@ void StaticAnalyzerDialog::_traverse_script(const String &p_code, const String &
 	GDScriptParser parser;
 	parser.clear();
 	Error e = parser.parse(p_code, "", false, p_self_path);
-	const GDScriptParser::ClassNode *c = static_cast<const GDScriptParser::ClassNode *>(parser.get_parse_tree());		//main class
+	const GDScriptParser::ClassNode *c = static_cast<const GDScriptParser::ClassNode *>(parser.get_parse_tree()); //main class
 	current_class = c;
 
+	String script_name = reduce_script_name(current_script->get_path());
+
+	String class_type = scene_cache[script_name]->get_state()->get_node_type(0);
+
+	//check to ensure script inherits the object type it is attached to
+	if (c->extends_class[0] != class_type) {
+
+		String context = "";
+		String issue = "Script " + current_script->get_path() + " does not inherit the object type it's attached to";
+
+		const script_errors scr_err = script_errors(script_name, context, issue);
+
+		add_script_error(scr_err);
+	}
+
 	check_class(current_class);
+
+	script_traversed.push_back(script_name);
+
+}
+
+void StaticAnalyzerDialog::add_script_error(const script_errors scr_err) {
+
+	if (script_error_cache.find(scr_err) == -1) {
+
+		TreeItem *script_item = scripts->create_item(rootscript);
+
+		script_item->set_text(0, scr_err.script);
+		script_item->set_text(1, scr_err.context);
+		script_item->set_text(2, scr_err.issue);
+
+		script_error_cache.push_back(scr_err);
+	}
 }
 
 void StaticAnalyzerDialog::check_class(const GDScriptParser::Node *n) {
@@ -183,7 +221,6 @@ void StaticAnalyzerDialog::check_class(const GDScriptParser::Node *n) {
 
 		current_class = c->subclasses[i];
 		check_class(current_class);
-			
 	}
 }
 
@@ -195,7 +232,7 @@ void StaticAnalyzerDialog::check_variables(const GDScriptParser::Node *n) {
 
 		for (int i = 0; i < c->variables.size(); i++) {
 
-			if (c->variables[i].expression->type == c->TYPE_OPERATOR) {
+			if (c->variables[i].expression && c->variables[i].expression->type == c->TYPE_OPERATOR) {
 
 				GDScriptParser::OperatorNode *o = static_cast<GDScriptParser::OperatorNode *>(c->variables[i].expression);
 
@@ -208,7 +245,6 @@ void StaticAnalyzerDialog::check_variables(const GDScriptParser::Node *n) {
 						if (idn->name == "get_node") {
 							//check get_node call
 							check_node_path(o->arguments[j + 1]);
-							int y = 2;
 						}
 					}
 					if (o->arguments[j]->type == o->TYPE_OPERATOR) {
@@ -232,7 +268,6 @@ void StaticAnalyzerDialog::check_variables(const GDScriptParser::Node *n) {
 				if (idn->name == "get_node") {
 					//check get_node call
 					check_node_path(o->arguments[j + 1]);
-					int y = 2;
 				}
 			}
 
@@ -243,19 +278,60 @@ void StaticAnalyzerDialog::check_variables(const GDScriptParser::Node *n) {
 	}
 }
 
+String StaticAnalyzerDialog::reduce_script_name(String scr_name) {
 
+	return scr_name.substr(6, current_script->get_path().length() - 9);
+}
 
-void StaticAnalyzerDialog::check_function(const GDScriptParser::Node *n) {
+void StaticAnalyzerDialog::check_function(const GDScriptParser::FunctionNode *n) {
 
-	if (n->type == n->TYPE_FUNCTION) {
+	const GDScriptParser::FunctionNode *f = static_cast<const GDScriptParser::FunctionNode *>(n);
 
-		const GDScriptParser::FunctionNode *f = static_cast<const GDScriptParser::FunctionNode *>(n);
+	String script_name = reduce_script_name(current_script->get_path());
 
-		for (int i = 0; i < f->body->statements.size(); i++) {
+	//check to ensure if the function is connected to a signal, then it has correct arity and type
+	if (script_traversed.find(script_name) == -1) {
 
-			check_function(f->body->statements[i]);
+		Ref<SceneState> ss = scene_cache[script_name]->get_state();
+
+		for (int i = 0; i < ss->get_connection_count(); i++) {
+			if (ss->get_connection_method(i) == f->name) {
+				MethodInfo sig;
+
+				String class_type = ss->get_connection_source(i);
+
+				if (class_type == ".") {
+					class_type = scene_cache[script_name]->get_state()->get_node_type(0);
+				}
+				
+				if (ClassDB::get_signal(class_type, ss->get_connection_signal(i), &sig)) {
+					if (sig.arguments.size() != f->arguments.size()) {
+
+						String context = "";
+						String issue = "line: " + itos(f->line) + "  Function " + String(f->name).quote() + " connected to signal " + String(ss->get_connection_signal(i)).quote() + " has wrong arity";
+
+						const script_errors scr_err = script_errors(script_name,context,issue);
+
+						add_script_error(scr_err);
+					}
+
+				}
+
+			}
 		}
+
+
+
+		
 	}
+
+	for (int i = 0; i < f->body->statements.size(); i++) {
+
+		check_statement(f->body->statements[i]);
+	}
+}
+
+void StaticAnalyzerDialog::check_statement(const GDScriptParser::Node *n) {
 
 	if (n->type == n->TYPE_OPERATOR) {
 
@@ -270,12 +346,11 @@ void StaticAnalyzerDialog::check_function(const GDScriptParser::Node *n) {
 				if (idn->name == "get_node") {
 					//check get_node call
 					check_node_path(o->arguments[i + 1]);
-					int y = 2;
 				}
 			}
 
 			if (o->arguments[i]->type == o->TYPE_OPERATOR) {
-				check_function(o->arguments[i]);
+				check_statement(o->arguments[i]);
 			}
 		}
 	}
@@ -288,14 +363,14 @@ void StaticAnalyzerDialog::check_function(const GDScriptParser::Node *n) {
 
 			for (int i = 0; i < cf->body->statements.size(); i++) {
 
-				check_function(cf->body->statements[i]);
+				check_statement(cf->body->statements[i]);
 			}
 		}
 		if (cf->body_else) {
 
 			for (int i = 0; i < cf->body_else->statements.size(); i++) {
 
-				check_function(cf->body_else->statements[i]);
+				check_statement(cf->body_else->statements[i]);
 			}
 		}
 	}
@@ -307,7 +382,7 @@ void StaticAnalyzerDialog::check_function(const GDScriptParser::Node *n) {
 		if (!b->statements.empty()) {
 
 			for (int i = 0; i < b->statements.size(); i++) {
-				check_function(b->statements[i]);
+				check_statement(b->statements[i]);
 			}
 		}
 	}
@@ -323,9 +398,9 @@ void StaticAnalyzerDialog::check_node_path(const GDScriptParser::Node *n) {
 
 		path = (String)cn->value;
 
-		NodePath node_path = NodePath(cn->value);
+		NodePath node_path = NodePath(path);
 
-		String script_name = current_script->get_path().substr(6, current_script->get_path().length() - 9);
+		String script_name = reduce_script_name(current_script->get_path());
 
 		bool node_found = false;
 		String first_path = node_path.get_name(0);
@@ -347,33 +422,24 @@ void StaticAnalyzerDialog::check_node_path(const GDScriptParser::Node *n) {
 			node_path = NodePath(mod_path, false);
 		}
 
-		if ( !scene_cache[script_name].is_null() && scene_cache[script_name]->get_state()->find_node_by_path(node_path) != -1) {
+		if (!scene_cache[script_name].is_null() && scene_cache[script_name]->get_state()->find_node_by_path(node_path) != -1) {
 
 			node_found = true;
 		}
 
-		else if ( !scene_cache[first_path].is_null() && scene_cache[first_path]->get_state()->find_node_by_path(node_path) != -1) {
+		else if (!scene_cache[first_path].is_null() && scene_cache[first_path]->get_state()->find_node_by_path(node_path) != -1) {
 
 			node_found = true;
 		}
 
-		
-		String context = current_scene->get_name() + current_scene->get_state()->get_node_path(current_node_id,true);
+		String context = current_scene->get_name() + current_scene->get_state()->get_node_path(current_node_id, true);
 		String issue = "line " + itos(cn->line) + " : node in " + path.quote() + " can't be found";
 
 		const script_errors scr_err = script_errors(script_name, context, issue);
-		
-		if (!node_found && script_error_cache.find(scr_err) == -1) {
 
-			TreeItem *script_item = scripts->create_item(rootscript);
-			script_item->set_text(0,script_name);
-			script_item->set_text(1, context);
-			script_item->set_text(2, issue);
-
-			script_error_cache.push_back(scr_err);
-					
+		if (!node_found) {
+			add_script_error(scr_err);
 		}
-
 	}
 
 	//if get_node call is through an identifier
@@ -384,7 +450,7 @@ void StaticAnalyzerDialog::check_node_path(const GDScriptParser::Node *n) {
 
 			for (int i = 0; i < current_class->variables.size(); i++) {
 
-				if (current_class->variables[i].identifier == in->name) {
+				if (current_class->variables[i].identifier == in->name && current_class->variables[i].expression) {
 					check_node_path(current_class->variables[i].expression);
 					break;
 				}
@@ -394,10 +460,8 @@ void StaticAnalyzerDialog::check_node_path(const GDScriptParser::Node *n) {
 		else if (current_function && current_function->body->variables.has(in->name)) {
 
 			check_node_path(current_function->body->variables[in->name]->assign);
-			
 		}
 	}
-	
 }
 
 StaticAnalyzerDialog::StaticAnalyzerDialog() {

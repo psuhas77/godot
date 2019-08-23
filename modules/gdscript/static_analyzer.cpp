@@ -47,8 +47,10 @@ void StaticAnalyzerDialog::show() {
 	script_traversed.clear();
 	root = scenes->create_item();
 	rootscript = scripts->create_item();
-	_traverse_scenes(EditorFileSystem::get_singleton()->get_filesystem(), root, rootscript, true); // building the scence cache
-	_traverse_scenes(EditorFileSystem::get_singleton()->get_filesystem(), root, rootscript);
+
+	EditorFileSystemDirectory *efsd = EditorFileSystem::get_singleton()->get_filesystem();
+	_traverse_scenes(efsd, root, rootscript, true); // building the scence cache
+	_traverse_scenes(efsd, root, rootscript, false);
 	popup_centered_ratio();
 }
 
@@ -59,7 +61,7 @@ void StaticAnalyzerDialog::_traverse_scenes(EditorFileSystemDirectory *efsd, Tre
 
 	for (int i = 0; i < efsd->get_subdir_count(); i++) {
 
-		_traverse_scenes(efsd->get_subdir(i), root, rootscript);
+		_traverse_scenes(efsd->get_subdir(i), root, rootscript, pre_instance);
 	}
 
 	for (int i = 0; i < efsd->get_file_count(); i++) {
@@ -172,10 +174,16 @@ void StaticAnalyzerDialog::_traverse_script(const String &p_code, const String &
 
 	String script_name = reduce_script_name(current_script->get_path());
 
-	String class_type = scene_cache[script_name]->get_state()->get_node_type(0);
+	bool has_scene = false;
+	String class_type;
+
+	if (scene_cache[script_name] != NULL) {
+
+		class_type = scene_cache[script_name]->get_state()->get_node_type(0);
+	}
 
 	//check to ensure script inherits the object type it is attached to
-	if (c->extends_class[0] != class_type) {
+	if (has_scene && c->extends_class[0] != class_type) {
 
 		String context = "";
 		String issue = "Script " + current_script->get_path() + " does not inherit the object type it's attached to";
@@ -289,8 +297,14 @@ void StaticAnalyzerDialog::check_function(const GDScriptParser::FunctionNode *n)
 
 	String script_name = reduce_script_name(current_script->get_path());
 
+	bool has_node = false;
+
+	if (scene_cache[script_name] != NULL) {
+		has_node = true;
+	}
+
 	//check to ensure if the function is connected to a signal, then it has correct arity and type
-	if (script_traversed.find(script_name) == -1) {
+	if (has_node && script_traversed.find(script_name) == -1) {
 
 		Ref<SceneState> ss = scene_cache[script_name]->get_state();
 
@@ -320,9 +334,6 @@ void StaticAnalyzerDialog::check_function(const GDScriptParser::FunctionNode *n)
 			}
 		}
 
-
-
-		
 	}
 
 	for (int i = 0; i < f->body->statements.size(); i++) {
@@ -402,6 +413,12 @@ void StaticAnalyzerDialog::check_node_path(const GDScriptParser::Node *n) {
 
 		String script_name = reduce_script_name(current_script->get_path());
 
+		bool script_has_node = false;
+
+		if (scene_cache[script_name] != NULL) {
+			script_has_node = true;
+		}
+
 		bool node_found = false;
 		String first_path = node_path.get_name(0);
 
@@ -422,7 +439,7 @@ void StaticAnalyzerDialog::check_node_path(const GDScriptParser::Node *n) {
 			node_path = NodePath(mod_path, false);
 		}
 
-		if (!scene_cache[script_name].is_null() && scene_cache[script_name]->get_state()->find_node_by_path(node_path) != -1) {
+		if (script_has_node && !scene_cache[script_name].is_null() && scene_cache[script_name]->get_state()->find_node_by_path(node_path) != -1) {
 
 			node_found = true;
 		}
